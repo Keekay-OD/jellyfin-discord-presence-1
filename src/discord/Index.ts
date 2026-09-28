@@ -1,35 +1,60 @@
 import Tags from "../utils/Tags.js";
 import DiscordRPC from "./Client.js";
 import { DiscordService } from "./DiscordService.js";
+import { startImageServer } from "./ImageServer.js";
 
-const updateInterval = 1000 * 15 // I suggest putting around >15s
-const clientId = process.env.DISCORD_CLIENT_ID
+console.log(
+    `[${Tags.Discord}] Connecting to Discord RPC...`
+);
 
-if (!clientId) {
-    console.log(`[${Tags.System}] DISCORD_CLIENT_ID is missing on .env file. Pleaseee fill it out.`)
-    process.exit(1)
-}
+/*
+ * Start our local poster server.
+ */
+startImageServer();
 
-DiscordRPC.on('ready', async () => {
-    console.log(`[${Tags.Discord}] Connected to Discord as ${DiscordRPC?.user?.username ?? "Unknown Username"} (${DiscordRPC?.user?.id ?? "Unknown User ID"}).`);
-
-    setInterval(async () => {
-        await DiscordService.UpdateRPC()
-    }, updateInterval);
-
-    await DiscordService.UpdateRPC()
-});
-
-DiscordRPC.on("error", (e) => {
-    console.log(`[${Tags.Discord}] Failed to connect to Discord PRC.`);
-    console.error(e)
-})
-
-console.log(`[${Tags.Discord}] Connecting to Discord RPC...`);
-
+/*
+ * Connect to Discord.
+ */
 try {
-    DiscordRPC.login({ clientId })
-} catch (e) {
-    console.log(`[${Tags.Discord}] Failed to connect to Discord PRC.`);
-    console.error(e)
+
+    await DiscordRPC.login();
+
+    console.log(
+        `[${Tags.Discord}] RPC Ready`
+    );
+
+} catch (error) {
+
+    console.error(
+        `[${Tags.Discord}] Failed to connect to Discord:`,
+        error
+    );
+
+    process.exit(1);
 }
+
+/*
+ * Update every 15 seconds.
+ */
+const updateInterval = 15000;
+
+setInterval(async () => {
+
+    try {
+
+        await DiscordService.UpdateRPC();
+
+    } catch (error) {
+
+        console.error(
+            `[${Tags.Discord}] Update failed:`,
+            error
+        );
+    }
+
+}, updateInterval);
+
+/*
+ * Run immediately.
+ */
+await DiscordService.UpdateRPC();

@@ -1,5 +1,15 @@
-import RPC from "discord-rpc"
+import { Client } from "@xhayper/discord-rpc";
 
-const DiscordRPC = new RPC.Client({ transport: 'ipc' });
+const clientId = process.env.DISCORD_CLIENT_ID;
 
-export default DiscordRPC
+if (!clientId) {
+    throw new Error(
+        "DISCORD_CLIENT_ID is missing from .env"
+    );
+}
+
+const DiscordRPC = new Client({
+    clientId
+});
+
+export default DiscordRPC;

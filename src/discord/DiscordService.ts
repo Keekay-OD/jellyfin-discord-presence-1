@@ -1,73 +1,298 @@
-import { Presence } from "discord-rpc"
-import { JellyfinService } from "../jellyfin/JellyfinService.js"
-import DiscordRPC from "./Client.js"
-import Tags from "../utils/Tags.js"
+import { JellyfinService } from "../jellyfin/JellyfinService.js";
+import DiscordRPC from "./Client.js";
+import Tags from "../utils/Tags.js";
+import { uploadToImgur } from "./AssetUploader.js";
 
 export const DiscordService = {
+
     UpdateRPC: async () => {
-        const mySession = await JellyfinService.GetMySession()
 
-        if (mySession) {
-            const np = mySession?.NowPlayingItem
+        /*
+         * -----------------------------------------------------
+         * GET JELLYFIN SESSION
+         * -----------------------------------------------------
+         */
 
-            const isPaused = mySession?.PlayState.IsPaused
+        const mySession =
+            await JellyfinService.GetMySession();
 
-            const username = mySession.UserName // Your jellyfin username
-            const deviceName = mySession.DeviceName // example: MASDEPAN-LAPTOP (Chrome)
-            // const clientName = mySession.Client // likely 'Jellyfin Web' or 'Jellyfin Android'
+        if (!mySession) {
 
-            const obj: Presence = {
-                startTimestamp: Date.now(),
-                largeImageKey: "jellyfin_logo",
-                largeImageText: `Jellyfin on ${deviceName} `,
-                details: undefined,
-                state: undefined
-            };
+            console.log(
+                "[Jellyfin] No active session."
+            );
 
-            if (!np) {
-                obj.details = "On Homepage"
-                obj.state = "Scrolling through videos."
-            } else {
-                // show playing
-                const startTime = Date.now() - Math.floor(mySession?.PlayState?.PositionTicks / 10000);
-                
-                // const mediaType: NowPlayingItemType = np?.Type
-                const seriesName = np?.SeriesName
-                const episodeName = np?.Name
-                const seasonName = np?.SeasonName
-                const episodeNumber = np?.IndexNumber ?? 0
+            return;
+        }
 
-                // idk bout this one lol
-                const shortSeasonName = "S" + seasonName?.split(" ")[1]
+        const np =
+            mySession.NowPlayingItem;
 
-                const shortSeaNEpsName = `${shortSeasonName}:E${episodeNumber}`
-                if (isNaN(Number(seasonName?.split(" ")[1]))) {
-                    // not valid series
-                    obj.details = `${seriesName}`
-                    obj.state = `${seasonName} ${episodeName}`
-                } else {
-                    // valid series
-                    obj.details = `${seriesName}`
-                    obj.state = `${shortSeaNEpsName} - ${episodeName}`
-                }
+        const playState =
+            mySession.PlayState;
 
-                obj.smallImageKey = isPaused == true ? "paused" : "playing"
-                obj.smallImageText = `${isPaused == true ? "Paused" : `Playing | ${username}`}`
-                obj.startTimestamp = isPaused == true ? undefined : startTime
+        const isPaused =
+            playState?.IsPaused ?? false;
+
+        const username =
+            mySession.UserName;
+
+        const deviceName =
+            mySession.DeviceName;
+
+        /*
+         * -----------------------------------------------------
+         * DEFAULT PRESENCE
+         * -----------------------------------------------------
+         */
+
+        let details =
+            "On Homepage";
+
+        let state =
+            "Browsing...";
+
+        let startTimestamp:
+            number | undefined =
+            undefined;
+
+        let largeImageUrl:
+            string | undefined =
+            undefined;
+
+        /*
+         * -----------------------------------------------------
+         * NOW PLAYING
+         * -----------------------------------------------------
+         */
+
+        if (np) {
+
+            /*
+             * -------------------------------------------------
+             * TV SHOW
+             * -------------------------------------------------
+             */
+
+            if (np.SeriesName) {
+
+                const seriesName =
+                    np.SeriesName;
+
+                const episodeName =
+                    np.Name ||
+                    "Unknown Episode";
+
+                const seasonNumber =
+                    np.ParentIndexNumber ??
+                    0;
+
+                const episodeNumber =
+                    np.IndexNumber ??
+                    0;
+
+                details =
+                    seriesName;
+
+                state =
+                    `S${seasonNumber}:E${episodeNumber} - ${episodeName}`;
+
             }
 
-            await DiscordRPC.setActivity(obj)
+            /*
+             * -------------------------------------------------
+             * MOVIE
+             * -------------------------------------------------
+             */
 
-            console.log(`[${Tags.Discord}] ==================================================================`)
-            console.log(`[${Tags.Discord}] Active Session : ${username}`)
-            console.log(`[${Tags.Discord}] Device         : ${deviceName}`)
-            console.log(`[${Tags.Discord}] Video State    : ${isPaused ? "Paused" : "Playing"}`)
-            console.log(``)
-            console.log(`[${Tags.Discord}] Details        : ${obj.details}`)
-            console.log(`[${Tags.Discord}] State          : ${obj.state}`)
-            console.log(`[${Tags.Discord}] Large Img Text : ${obj.largeImageText}`)
-            console.log(`[${Tags.Discord}] ==================================================================`)
-            console.log(``)
+            else {
+
+                details =
+                    np.Name ||
+                    "Unknown Movie";
+
+                state =
+                    "Movie";
+            }
+
+            /*
+             * -------------------------------------------------
+             * PLAYBACK TIME
+             * -------------------------------------------------
+             */
+
+            const positionTicks =
+                playState?.PositionTicks ?? 0;
+
+            const positionMilliseconds =
+                Math.floor(
+                    positionTicks / 10000
+                );
+
+            const playbackStart =
+                Date.now() -
+                positionMilliseconds;
+
+            if (!isPaused) {
+
+                startTimestamp =
+                    playbackStart;
+            }
+
+            /*
+             * -------------------------------------------------
+             * JELLYFIN ARTWORK
+             * -------------------------------------------------
+             */
+
+            const jellyfinUrl =
+                process.env.JELLYFIN_URL;
+
+            if (!jellyfinUrl) {
+
+                throw new Error(
+                    "JELLYFIN_URL is missing from .env"
+                );
+            }
+
+            const cleanJellyfinUrl =
+                jellyfinUrl.replace(
+                    /\/+$/,
+                    ""
+                );
+
+            /*
+             * For TV:
+             *
+             * np.Id       = episode
+             * np.SeriesId = series
+             *
+             * We want the SERIES poster.
+             *
+             * For movies:
+             *
+             * np.Id = movie
+             */
+
+            const imageItemId =
+                np.SeriesId ??
+                np.Id;
+
+            /*
+             * Don't use the episode ImageTag
+             * when requesting the series artwork.
+             */
+
+            const posterTag =
+                np.SeriesId
+                    ? undefined
+                    : np.ImageTags?.Primary;
+
+            const posterUrl =
+                posterTag
+                    ? `${cleanJellyfinUrl}/Items/${imageItemId}/Images/Primary?tag=${encodeURIComponent(
+                          posterTag
+                      )}`
+                    : `${cleanJellyfinUrl}/Items/${imageItemId}/Images/Primary`;
+
+            console.log(
+                `[Jellyfin] Artwork Item ID: ${imageItemId}`
+            );
+
+            console.log(
+                `[Jellyfin] Poster: ${posterUrl}`
+            );
+
+            /*
+             * Download/cache the poster.
+             *
+             * Despite the old function name, this no longer
+             * uploads anything to Imgur.
+             */
+
+            largeImageUrl =
+                await uploadToImgur(
+                    posterUrl,
+                    "large"
+                ) ?? undefined;
+
+            console.log(
+                `[Discord] Large image: ${
+                    largeImageUrl ??
+                    "none"
+                }`
+            );
+        }
+
+        /*
+         * -----------------------------------------------------
+         * DISCORD PRESENCE
+         * -----------------------------------------------------
+         */
+
+        const activity: any = {
+
+            details,
+
+            state,
+
+            largeImageText:
+                np
+                    ? `Jellyfin on ${deviceName}`
+                    : "Jellyfin",
+
+            smallImageText:
+                isPaused
+                    ? "Paused"
+                    : np
+                        ? `Playing | ${username}`
+                        : `Browsing | ${username}`,
+
+            /*
+             * IMPORTANT:
+             *
+             * Discord expects the external image URL in
+             * largeImageKey.
+             *
+             * NOT largeImageUrl.
+             */
+
+            largeImageKey:
+                largeImageUrl,
+
+            /*
+             * Only send the timestamp while playing.
+             */
+
+            ...(startTimestamp
+                ? {
+                    startTimestamp
+                }
+                : {}),
+
+            /*
+             * Playing activity.
+             */
+
+            type: 0
+        };
+
+        try {
+
+            await DiscordRPC.user?.setActivity(
+                activity
+            );
+
+            console.log(
+                `[${Tags.Discord}] Updated Rich Presence: ${details}${np ? ` - ${state}` : ""}`
+            );
+
+        } catch (error) {
+
+            console.error(
+                `[${Tags.Discord}] Failed to update presence:`,
+                error
+            );
         }
     }
-}
+};
